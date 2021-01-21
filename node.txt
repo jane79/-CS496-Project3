@@ -1,0 +1,488 @@
+var fs = require('fs');
+const express = require('express');
+var http = require('http');
+var bodyParser = require('body-parser')
+var socketio = require('socket.io')
+const app = express();
+
+app.set('port',process.env.PORT || 3000);
+app.use(bodyParser.urlencoded({extended:false}));
+app.use(bodyParser.json());
+
+var mongoose = require('mongoose');
+const { json } = require('express');
+mongoose.connect('mongodb://127.0.0.1:27017/pro3');
+var db = mongoose.connection;
+db.on('error', function(){
+    console.log('Connection Failed!');
+});
+db.once('open', function() {
+    console.log('Connected!');
+});
+
+var information = mongoose.Schema({
+    name : 'string',
+    email : 'string',
+    mode : 'string'
+ });
+ var waitinginfo = mongoose.Schema({
+     rider : 'string',
+     from : 'string',
+     to : 'string',
+     driverEmail : 'string',
+     driverName : 'string'
+ });
+var gpsinfo = mongoose.Schema({
+    email : 'string',
+    latitude : 'number',
+    longitude : 'number'
+});
+var recordinfo = mongoose.Schema({
+    from : 'string',
+    to : 'string',
+    startTime : 'string',
+    endTime : 'string',
+    price : 'string'
+})
+ var User = mongoose.model('user', information);
+ var Rider = mongoose.model('rider', information);
+ var Driver = mongoose.model('driver', information);
+ var Waiting = mongoose.model('waiting', waitinginfo);
+ var Matching = mongoose.model('matching', waitinginfo);
+ var GPS = mongoose.model('gps', gpsinfo);
+ var Rrecord = mongoose.model('rrecord', recordinfo);
+ var Drecord = mongoose.model('drecord', recordinfo);
+
+
+ app.post('/login/facebook', function(req, res, next) {
+    var userEmail = JSON.parse(req.body.fbUserData)['email'];
+    var userName = JSON.parse(req.body.fbUserData)['name'];
+    console.log("login fb Email : ", userEmail);
+    console.log("login fb Name : ", userName);
+
+    var newUser = new User({name:userName, email:userEmail, mode:"false"});
+    newUser.save(function(error, data){
+        if(error){
+            console.log(error);
+        }else{
+            console.log('Saved!');
+        }
+    });
+    var arr = []
+    arr.push({email:userEmail, name:userName, mode:""})
+    res.json(arr[0])
+});
+
+app.post('/login/mode', function(req, res, next){
+    var userEmail = JSON.parse(req.body.fbUserData)['email'];
+    var userName = JSON.parse(req.body.fbUserData)['name'];
+    var userMode = JSON.parse(req.body.fbUserData)['mode'];
+    console.log("login mode : ", userMode);
+
+    async function findif() {
+        var user = await User.find({email:userEmail, mode:'false'})
+        return user
+    };
+    findif().then( result => {
+        var arr = []
+        if(userMode == "rider"){
+            var newRider = new Rider({name:userName, email:userEmail, mode:"rider"});
+            newRider.save(function(error, data){
+                if(error){
+                    console.log(error);
+                }else{
+                    console.log('Rider Saved!');
+                }
+            });
+        }
+        else if(userMode == "driver"){
+            var newDriver = new Driver({name:userName, email:userEmail, mode:"driver"});
+            newDriver.save(function(error, data){
+                if(error){
+                    console.log(error);
+                }else{
+                    console.log('Driver Saved!');
+                }
+            });
+        }
+        else{
+            console.log('MODE ERROR!');
+        }
+        arr.push({email:result[0].email, name:result[0].name, mode:userMode})
+        console.log(arr[0])
+        res.json(arr[0])
+    });    
+    /*
+    (async() => {
+        await Info.updateOne({email:userEmail}, {mode:userMode});
+        var arr = []
+        arr.push({email:userEmail, name:userName, mode:userMode})
+        console.log(arr.toString())
+        res.json()
+    })();*/
+});
+
+app.post('/call/waiting', function(req, res, next){
+    var waitingRider = JSON.parse(req.body.waitingData)['rider'];
+    var start = JSON.parse(req.body.waitingData)['from'];
+    var goal= JSON.parse(req.body.waitingData)['to'];
+    var arr = []
+    console.log("waiting : ", waitingRider)
+    console.log("from : ", start)
+    console.log("to : ", goal)
+    //Waiting
+    var newWaiting = new Waiting({rider:waitingRider, from:start, to:goal, driverEmail:"null", driverName:"null"});
+    newWaiting.save(function(error, data){
+        if(error){
+            console.log(error);
+        }else{
+            console.log('New Waiting!!');
+        }
+    });
+    arr.push({rider:waitingRider, from:start, to:goal})
+    console.log(arr[0])
+    res.json(arr[0])
+
+})
+
+app.post('/listen/waiting', function(req, res, next){
+
+    /*
+    (async() => {
+        await Info.updateOne({email:userEmail}, {mode:userMode});
+        var arr = []
+        arr.push({email:userEmail, name:userName, mode:userMode})
+        console.log(arr.toString())
+        res.json()
+    })();*/
+    
+    var arr=[]
+    //(method) Model<Document<any>>.count
+    //(callback?: (err: any, count: number) => void): any (+1 overload)
+    Waiting.countDocuments({}, function(err, count){
+        if(count!=0){
+            async function findif() {
+                var user = await Waiting.find()
+                //console.log(user)
+                console.log(count)
+                return user
+            };
+            findif().then( result => {
+                arr.push({
+                    rider:result[0].rider, 
+                    from:result[0].from,
+                    to:result[0].to,
+                    driverEmail:result[0].driverEmail,
+                    driverName:result[0].drvierName
+                })
+                console.log("result:",arr)
+                res.json(arr[0])
+            });
+            
+            
+        }
+        else{
+            arr.push({
+                rider:"null",
+                from:"null",
+                to:"null",
+                driverEmail:"null",
+                driverName:"null"
+            })
+            console.log(arr[0])
+            res.json(arr[0])
+        }
+    });
+})
+
+app.post('/response/waiting', function(req, res, next){
+    var waitingRider = JSON.parse(req.body.responseData)['rider']
+    var responseEmail = JSON.parse(req.body.responseData)['driverEmail']
+    var responseName = JSON.parse(req.body.responseData)['driverName']
+
+    //console.log("waiting rider : ", waitingRider)
+
+    async function findif() {
+        var user = await Waiting.find({rider:waitingRider})
+        return user
+    };
+    findif().then( result => {
+        //console.log(result)
+        var arr = []
+        var newMatching = new Matching({
+            rider:result[0].rider,
+            from:result[0].from,
+            to:result[0].to,
+            driverEmail:responseEmail,
+            driverName:responseName});
+        newMatching.save(function(error, data){
+            if(error){
+                console.log(error);
+            }else{
+                console.log('Matching Saved!');
+                Waiting.deleteMany({rider:waitingRider}, function(err, result){
+                    if(err){
+                        console.log(err)
+                    }
+                });
+            }
+        });
+
+        arr.push({
+            rider:result[0].rider,
+            from:result[0].from,
+            to:result[0].to,
+            driverEmail:responseEmail,
+            driverName:responseName
+        })
+        console.log(arr[0])
+        res.json(arr[0])
+    });
+})
+
+app.post('/gps', function(req, res, next){
+    var mode = JSON.parse(req.body.GPSdata)['mode'];
+    var lat = JSON.parse(req.body.GPSdata)['latitude'];
+    var long = JSON.parse(req.body.GPSdata)['longitude'];
+    var rider = JSON.parse(req.body.GPSdata)['rider'];
+    var driver = JSON.parse(req.body.GPSdata)['driver'];
+    console.log('driveremail:', driver)
+    var arr = []
+    /*
+    GPS
+    email : 'string',
+    latitude : 'double',
+    longitude : 'double'
+    */
+    if(mode == 'rider'){
+        async function findif() {
+        var riders = await GPS.find({email:rider})
+        //console.log(user)
+        return riders
+        };
+        findif().then( result => {
+            console.log("rider len : ", result.length)
+            if(result.length!=0){  // 라이더 이메일이 저장되어 있다면
+                (async() => {
+                    await GPS.updateOne({email:rider}, 
+                        {latitude:lat, longitude:long});  // 경도위도 업데이트
+                    
+                })();
+            }
+            else{  // 라이더 이메일이 안 저장되어 있다면, 새로 저장
+                var newGPS = new GPS({email:rider, latitude:lat, longitude:long});
+                newGPS.save(function(error, data){
+                    if(error){
+                        console.log(error);
+                    }
+                });
+            }
+            var dLat = 0.0
+            var dLong = 0.0
+            ///드라이버 GPS 정보 탐색
+            async function findif() {
+                var drivers = await GPS.find({email:driver})
+                return drivers
+            };
+            findif().then( result => {
+                if(result.length!=0){  // 드라이버 GPS 정보가 있다면
+                    // 경도위도 데이터 가져오기
+                    dLat = result[0].latitude
+                    dLong = result[0].longitude                        
+                }
+                else{  // 드라이버 GPS 정보가 없다면
+                    // 쓰레기값 넣어주기
+                    dLat = -1.0
+                    dLong = -1.0
+                }
+                arr.push({riderLat:lat, riderLong:long, 
+                    driverLat:dLat, driverLong : dLong})
+                console.log(arr[0])
+                res.json(arr[0])
+            });
+        });
+    }else if (mode == 'driver'){
+        async function findif() {
+            var drivers = await GPS.find({email:driver})
+            //console.log('driver :', driver)
+            //console.log('drivers : ', drivers)
+            return drivers
+            };
+            findif().then( result => {
+                console.log("driver len : ", result.length)
+                if(result.length!=0){  // 드라이버 이메일이 저장되어 있다면
+                    (async() => {
+                        await GPS.updateOne({email:driver}, 
+                            {latitude:lat, longitude:long});  // 경도위도 업데이트
+                        
+                    })();
+                }
+                else{  // 드라이버 이메일이 안 저장되어 있다면, 새로 저장
+                    var newGPS = new GPS({email:driver, latitude:lat, longitude:long});
+                    newGPS.save(function(error, data){
+                        if(error){
+                            console.log(error);
+                        }
+                    });
+                }
+                var rLat = 0.0
+                var rLong = 0.0
+                ///라이더 GPS 정보 탐색
+                async function findif() {
+                    var riders = await GPS.find({email:rider})
+                    return riders
+                };
+                findif().then( result => {
+                    if(result.length!=0){  // 드라이버 GPS 정보가 있다면
+                        // 경도위도 데이터 가져오기
+                        rLat = result[0].latitude
+                        rLong = result[0].longitude                        
+                    }
+                    else{  // 드라이버 GPS 정보가 없다면
+                        // 쓰레기값 넣어주기
+                        rLat = -1.0
+                        rLong = -1.0
+                    }
+                    arr.push({riderLat:rLat, riderLong:rLong, 
+                        driverLat:lat, driverLong : long})
+                    console.log(arr[0])
+                    res.json(arr[0])
+                });
+            });
+    }else{
+        console.log("MODE ERROR!!")
+        arr.push({riderLat:-1.0, riderLong:-1.0, 
+            driverLat:-1.0, driverLong : -1.0})
+        res.json(arr[0])
+    }
+    
+})
+
+app.post('/call/matching', function(req, res, next){
+    var waitingRider = req.body.rider
+    Matching.countDocuments({}, function(err, count){
+        if(count!=0){
+            async function findif() {
+                var matchSet = await Matching.find({rider:waitingRider})
+                //console.log(user)
+                console.log(count)
+                return matchSet
+            };
+            findif().then( result => {
+                var arr = []
+                arr.push({
+                    rider:result[0].rider, 
+                    from:result[0].from,
+                    to:result[0].to,
+                    driverEmail:result[0].driverEmail,
+                    driverName:result[0].driverName
+                })
+                Matching.deleteMany({rider:result[0].rider}, function(err, result){
+                    if(err){
+                        console.log(err)
+                    }
+                });
+                console.log("match:",arr)
+                res.json(arr[0])
+            });
+            
+            
+        }
+        else{
+            var arr=[]
+            arr.push({
+                rider:"null",
+                from:"null",
+                to:"null",
+                driverEmail:"null",
+                driverName:"null"
+            })
+            console.log(arr[0])
+            res.json(arr[0])
+        }
+    });
+})
+app.post('/record/rider', function(req, res, next){
+    var mfrom = JSON.parse(req.body.RecordData)['from'];
+    var mto = JSON.parse(req.body.RecordData)['to'];
+    var mstartTime = JSON.parse(req.body.RecordData)['startTime'];
+    var mendTime = JSON.parse(req.body.RecordData)['endTime'];
+    var mprice = JSON.parse(req.body.RecordData)['price'];
+    var arr = []
+    var newRrecord = new Rrecord({
+        from:mfrom, to:mto, startTime:mstartTime, endTime:mendTime, price:mprice});
+    newRrecord.save(function(error, data){
+        if(error){
+            console.log(error);
+        }else{
+            console.log('Rider Record Saved!');
+        }
+    });
+    arr.push({
+        from:mfrom, to:mto, startTime:mstartTime, endTime:mendTime, price:mprice
+    })
+    console.log(arr[0])
+    res.json(arr[0])
+})
+app.post('/record/driver', function(req, res, next){
+    console.log(req.body)
+    var mfrom = JSON.parse(req.body.RecordData)['from'];
+    var mto = JSON.parse(req.body.RecordData)['to'];
+    var mstartTime = JSON.parse(req.body.RecordData)['startTime'];
+    var mendTime = JSON.parse(req.body.RecordData)['endTime'];
+    var mprice = JSON.parse(req.body.RecordData)['price'];
+    var arr = []
+    var newDrecord = new Drecord({
+        from:mfrom, to:mto, startTime:mstartTime, endTime:mendTime, price:mprice});
+    newDrecord.save(function(error, data){
+        if(error){
+            console.log(error);
+        }else{
+            console.log('Driver Record Saved!');
+        }
+    });
+    arr.push({
+        from:mfrom, to:mto, startTime:mstartTime, endTime:mendTime, price:mprice
+    })
+    console.log(arr[0])
+    res.json(arr[0])
+})
+
+var server = http.createServer(app).listen(app.get('port'),function(){
+    console.log("익스프레스로 웹 서버를 실행함 : "+ app.get('port')); 
+ });
+
+ //var io = socketio.listen(server);
+
+
+
+ /*
+ val REQUEST_TAKE_PHOTO = 1
+override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    super.onActivityResult(requestCode, resultCode, data)
+    if(resultCode == RESULT_OK) {
+        if (requestCode == REQUEST_TAKE_PHOTO) {
+            var bundle: Bundle? = data?.getExtras()
+            var bitmap: Bitmap = bundle?.get("data") as Bitmap
+            var changedUri: Uri = BitmapToUri(this.requireContext(), bitmap)
+            //ImageDataset.add(MediaFileData(changedUri))
+            //gallery.setImageBitmap(bitmap)
+        }
+        refreshFragment(this, activity!!.supportFragmentManager)
+    }
+}
+fun BitmapToUri(context: Context, bitmap: Bitmap): Uri {
+    var bytes =  ByteArrayOutputStream()
+    bitmap.compress(Bitmap.CompressFormat.JPEG,100, bytes)
+    val path = MediaStore.Images.Media.insertImage(context.contentResolver, bitmap, "Title", null)
+    return Uri.parse(path.toString())
+}
+private fun takePicture() {
+    //카메라 앱 실행
+    var capture = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+    startActivityForResult(capture, REQUEST_TAKE_PHOTO)
+}
+fun refreshFragment(fragment: Fragment, fragmentManager: FragmentManager){
+    var ft: FragmentTransaction = fragmentManager.beginTransaction()
+    ft.detach(fragment).attach(fragment).commit()
+}*/
